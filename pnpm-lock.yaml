@@ -12,7 +12,7 @@ importers:
         specifier: ^6.9.0
         version: 6.20.0
       next:
-        specifier: ^14.2.35
+        specifier: 14.2.35
         version: 14.2.35(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       openai:
         specifier: ^4.58.1
