@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Chat Logger</h1>
+  <h1 align="center">OmniChat</h1>
   <p align="center">
     A lightweight chat interface with built-in conversation logging to MongoDB.
     <br />
@@ -8,9 +8,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dedkola/openai_to_mongo/issues"><img src="https://img.shields.io/github/issues/dedkola/openai_to_mongo?style=flat-square" alt="Issues" /></a>
-  <a href="https://github.com/dedkola/openai_to_mongo/pulls"><img src="https://img.shields.io/github/issues-pr/dedkola/openai_to_mongo?style=flat-square" alt="Pull Requests" /></a>
-  <a href="https://github.com/dedkola/openai_to_mongo/commits"><img src="https://img.shields.io/github/last-commit/dedkola/openai_to_mongo?style=flat-square" alt="Last Commit" /></a>
+  <a href="https://github.com/dedkola/omnichat/issues"><img src="https://img.shields.io/github/issues/dedkola/omnichat?style=flat-square" alt="Issues" /></a>
+  <a href="https://github.com/dedkola/omnichat/pulls"><img src="https://img.shields.io/github/issues-pr/dedkola/omnichat?style=flat-square" alt="Pull Requests" /></a>
+  <a href="https://github.com/dedkola/omnichat/commits"><img src="https://img.shields.io/github/last-commit/dedkola/omnichat?style=flat-square" alt="Last Commit" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
 </p>
 
@@ -18,7 +18,7 @@
 
 ## Overview
 
-Chat Logger is a self-hostable chat application that connects to OpenAI or any OpenAI-compatible local LLM (such as LM Studio) and persists every conversation to MongoDB. It is designed for developers and teams who want a simple way to interact with LLMs while maintaining a searchable log of all exchanges.
+OmniChat is a self-hostable chat application that connects to OpenAI or any OpenAI-compatible local LLM (such as LM Studio) and persists every conversation to MongoDB. It is designed for developers and teams who want a simple way to interact with LLMs while maintaining a searchable log of all exchanges.
 
 
 ## Key Features
@@ -54,8 +54,8 @@ Chat Logger is a self-hostable chat application that connects to OpenAI or any O
 ### Installation
 
 ```bash
-git clone https://github.com/dedkola/openai_to_mongo.git
-cd openai_to_mongo
+git clone https://github.com/dedkola/omnichat.git
+cd omnichat
 pnpm install
 pnpm dev
 ```
@@ -230,7 +230,7 @@ Deploy as any standard Next.js application. Pass the environment variables liste
 
 Contributions are welcome. Before opening a PR:
 
-1. Check [existing issues](https://github.com/dedkola/openai_to_mongo/issues) and PRs for duplicates.
+1. Check [existing issues](https://github.com/dedkola/omnichat/issues) and PRs for duplicates.
 2. Keep changes focused — one feature or fix per PR.
 3. Include manual verification steps or tests where applicable.
 

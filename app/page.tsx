@@ -185,7 +185,7 @@ export default function HomePage() {
               <Menu size={20} />
             </button>
             <h1 className="text-xl font-semibold text-slate-100">
-              Chat Logger
+              OmniChat
             </h1>
           </div>
 

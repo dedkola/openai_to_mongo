@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Chat Logger",
-  description: "Next.js + MongoDB + Tailwind Chat Logger",
+  title: "OmniChat",
+  description: "Next.js + MongoDB + Tailwind Chat with LLM logging",
 };
 
 export default function RootLayout({
