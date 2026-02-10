@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Menu, Settings } from "lucide-react";
 import ChatMessage from "@/components/ChatMessage";
+import Sidebar from "@/components/Sidebar";
+import SettingsModal from "@/components/SettingsModal";
+import StatusBar, { type ChatStats } from "@/components/StatusBar";
 
 interface LogItem {
   sessionId?: string | null;
@@ -17,20 +21,72 @@ export default function HomePage() {
     { role: "user" | "assistant"; content: string }[]
   >([]);
   const [loading, setLoading] = useState(false);
+  const [isSidebarOpen, setSidebarOpen] = useState(true);
+  const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [chatStats, setChatStats] = useState<ChatStats | null>(null);
+  const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // Load last logs on first render
-    fetch("/api/logs")
-      .then((r) => r.json())
-      .then((data) => {
-        const mapped = (data.logs as LogItem[]).reverse().flatMap((l) => [
-          { role: "user" as const, content: l.question },
-          { role: "assistant" as const, content: l.answer },
-        ]);
-        setMessages(mapped);
+  const checkDbConnection = useCallback(() => {
+    try {
+      const settingsStr = localStorage.getItem("settings");
+      const settings = settingsStr ? JSON.parse(settingsStr) : {};
+      const mongoUri = settings.database?.mongoUri;
+      if (!mongoUri) {
+        setDbConnected(null);
+        return;
+      }
+      fetch("/api/test-db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mongoUri, mongoDb: settings.database?.mongoDb }),
       })
-      .catch(() => {});
+        .then((r) => r.json())
+        .then((data) => setDbConnected(!!data.ok))
+        .catch(() => setDbConnected(false));
+    } catch {
+      setDbConnected(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkDbConnection();
+  }, [checkDbConnection]);
+
+  useEffect(() => {
+    // Load last logs on first render using DB settings from the UI (if any)
+    try {
+      const settingsStr = typeof window !== "undefined"
+        ? localStorage.getItem("settings")
+        : null;
+      const settings = settingsStr ? JSON.parse(settingsStr) : {};
+
+      // Auto-open settings on first visit when nothing is configured
+      const hasLlm = settings.llm?.openai?.apiKey || settings.llm?.lmstudio?.model;
+      const hasDb = settings.database?.mongoUri;
+      if (!hasLlm && !hasDb) {
+        setSettingsOpen(true);
+      }
+
+      fetch("/api/logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings }),
+      })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to load logs"))))
+        .then((data) => {
+          const mapped = (data.logs as LogItem[]).reverse().flatMap((l) => [
+            { role: "user" as const, content: l.question },
+            { role: "assistant" as const, content: l.answer },
+          ]);
+          setMessages(mapped);
+        })
+        .catch(() => { });
+    } catch {
+      // If settings parsing fails, just skip loading history
+    }
   }, []);
 
   useEffect(() => {
@@ -50,14 +106,40 @@ export default function HomePage() {
     setLoading(true);
 
     try {
+      // Get settings from localStorage
+      const settingsStr = localStorage.getItem("settings");
+      const settings = settingsStr ? JSON.parse(settingsStr) : {};
+
+      // Ensure we have a session id for this conversation
+      let currentSessionId = sessionId;
+      if (!currentSessionId && typeof crypto !== "undefined" && crypto.randomUUID) {
+        currentSessionId = crypto.randomUUID();
+        setSessionId(currentSessionId);
+      }
+      
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({ 
+          message: msg,
+          sessionId: currentSessionId,
+          settings: settings
+        }),
       });
       const data = await res.json();
-      const answer = data.answer || "(no answer)";
+
+      if (!res.ok) {
+        throw new Error(data.error || `Request failed with status ${res.status}`);
+      }
+
+      const answer = data.answer ?? "(no answer)";
+      if (data.stats) {
+        setChatStats(data.stats);
+        if (data.stats.dbMs !== null) setDbConnected(true);
+      }
       setMessages((m) => [...m, { role: "assistant", content: answer }]);
+      // Trigger sidebar history refresh (best-effort, regardless of logged flag)
+      setHistoryVersion((v) => v + 1);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
       setMessages((m) => [
@@ -69,44 +151,121 @@ export default function HomePage() {
     }
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-2xl md:text-3xl font-light text-brand-800">
-        Chat Logger
-      </h1>
+  function startNewChat() {
+    setMessages([]);
+    setSessionId(null);
+    // Also refresh sidebar history so the just-finished chat appears
+    setHistoryVersion((v) => v + 1);
+  }
 
-      <div
-        ref={listRef}
-        className="h-[60vh] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-3"
-      >
-        {messages.length === 0 && (
-          <p className="text-sm text-zinc-500">
-            Type a message below to start chatting. Previous logs will appear
-            here.
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <ChatMessage key={i} role={m.role} content={m.content} />
-        ))}
-        {loading && (
-          <div className="text-xs text-zinc-400 italic">Thinking…</div>
-        )}
+  return (
+    <div className="flex h-screen bg-slate-950 text-slate-200 overflow-hidden">
+      {/* Sidebar */}
+      <Sidebar
+        isOpen={isSidebarOpen}
+        onToggle={() => setSidebarOpen(!isSidebarOpen)}
+        onNewChat={startNewChat}
+        historyVersion={historyVersion}
+        dbConnected={dbConnected}
+        llmProvider={chatStats ? (chatStats.provider === "lmstudio" ? "LM Studio" : `OpenAI`) : null}
+      />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col relative h-full">
+        {/* Status Bar */}
+        <StatusBar dbConnected={dbConnected} stats={chatStats} />
+
+        {/* Header */}
+        <header className="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur shrink-0 z-10">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setSidebarOpen(!isSidebarOpen)}
+              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
+            >
+              <Menu size={20} />
+            </button>
+            <h1 className="text-xl font-semibold text-slate-100">
+              Chat Logger
+            </h1>
+          </div>
+
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
+            title="Model Settings"
+          >
+            <Settings size={20} />
+          </button>
+        </header>
+
+        {/* Chat Area */}
+        <div className="flex-1 overflow-y-auto px-4 md:px-0">
+          <div className="max-w-3xl mx-auto py-8">
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-64 text-slate-500 space-y-4">
+                <p className="text-lg font-medium">Start a new conversation</p>
+                <p className="text-sm">
+                  Type below to start chatting.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(true)}
+                    className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
+                  >
+                    Configure connections
+                  </button>{" "}
+                  to get started.
+                </p>
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <ChatMessage key={i} role={m.role} content={m.content} />
+            ))}
+            {loading && (
+              <div className="flex justify-start mb-6 animate-pulse">
+                <div className="bg-slate-800 rounded-2xl px-5 py-4 text-slate-400 text-sm">
+                  Thinking...
+                </div>
+              </div>
+            )}
+            <div ref={listRef} />
+          </div>
+        </div>
+
+        {/* Input Area */}
+        <div className="p-4 border-t border-slate-800 bg-slate-900/80 backdrop-blur shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <form onSubmit={sendMessage} className="flex gap-3">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask me anything…"
+                disabled={loading}
+                className="flex-1 bg-slate-800 text-slate-200 rounded-xl px-4 py-3 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50 shadow-lg"
+              />
+              <button
+                disabled={loading}
+                className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-medium text-white shadow-md hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Send
+              </button>
+            </form>
+            <div className="text-center mt-2">
+              <p className="text-[10px] text-slate-600">
+                AI responses can be inaccurate. Verify important information.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <form onSubmit={sendMessage} className="flex gap-2">
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask me anything…"
-          className="flex-1 rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-300"
-        />
-        <button
-          disabled={loading}
-          className="rounded-xl bg-brand-400 px-5 py-3 text-sm font-medium text-white shadow hover:bg-brand-500 disabled:opacity-50"
-        >
-          Send
-        </button>
-      </form>
+      {/* Modals */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          checkDbConnection();
+        }}
+      />
     </div>
   );
 }

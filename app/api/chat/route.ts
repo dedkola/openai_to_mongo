@@ -1,41 +1,158 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
-import { getDb } from "@/lib/mongo";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { MongoClient } from "mongodb";
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, sessionId } = await req.json();
+    const { message, sessionId, settings } = await req.json();
     if (!message || typeof message !== "string") {
       return new Response(JSON.stringify({ error: "Missing 'message'" }), {
         status: 400,
       });
     }
 
-    // 1) Ask OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        { role: "system", content: "You are a helpful assistant." },
-        { role: "user", content: message },
-      ],
-    });
+    let answer = "";
+    let modelUsed = "gpt-3.5-turbo"; // default
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
 
-    const answer = completion.choices[0]?.message?.content ?? "";
+    const llmSettings = settings?.llm || {};
+    const provider = llmSettings.provider as string | undefined;
+    const legacySelectedModel = llmSettings.selectedModel as string | undefined;
+    const useLmStudio =
+      provider === "lmstudio" || (!provider && legacySelectedModel === "local-model");
 
-    // 2) Store in Mongo
-    const db = await getDb();
-    const doc = {
-      sessionId: sessionId || null,
-      question: message,
+    const llmStart = Date.now();
+
+    // Determine which LLM to use based on settings
+    if (useLmStudio) {
+      // Use LM Studio or similar local API
+      const lmstudioUrl =
+        llmSettings.lmstudio?.url ||
+        llmSettings.lmstudioUrl ||
+        "http://localhost:1234";
+      const lmModel =
+        llmSettings.lmstudio?.model ||
+        llmSettings.lmstudioModel ||
+        "local-model";
+      const response = await fetch(`${lmstudioUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: lmModel,
+          messages: [
+            { role: "system", content: settings.systemInstruction || "You are a helpful assistant." },
+            { role: "user", content: message },
+          ],
+          stream: false
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`LM Studio API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      answer = data.choices[0]?.message?.content ?? "";
+      modelUsed = lmModel;
+      promptTokens = data.usage?.prompt_tokens ?? 0;
+      completionTokens = data.usage?.completion_tokens ?? 0;
+      totalTokens = data.usage?.total_tokens ?? 0;
+    } else {
+      // Use OpenAI
+      const openaiApiKey =
+        llmSettings.openai?.apiKey ||
+        llmSettings.openaiApiKey ||
+        process.env.OPENAI_API_KEY;
+      if (!openaiApiKey) {
+        throw new Error("OpenAI API key not provided and not found in environment variables");
+      }
+
+      const openai = new OpenAI({ apiKey: openaiApiKey });
+
+      const openaiModel =
+        llmSettings.openai?.model ||
+        llmSettings.openaiModel ||
+        legacySelectedModel ||
+        "gpt-3.5-turbo";
+
+      const completion = await openai.chat.completions.create({
+        model: openaiModel,
+        messages: [
+          { role: "system", content: settings.systemInstruction || "You are a helpful assistant." },
+          { role: "user", content: message },
+        ],
+      });
+
+      answer = completion.choices[0]?.message?.content ?? "";
+      modelUsed = openaiModel;
+      promptTokens = completion.usage?.prompt_tokens ?? 0;
+      completionTokens = completion.usage?.completion_tokens ?? 0;
+      totalTokens = completion.usage?.total_tokens ?? 0;
+    }
+
+    const llmMs = Date.now() - llmStart;
+
+    // Store in Mongo (best-effort; failures should not block responses)
+    let logged = false;
+    let dbMs: number | null = null;
+    try {
+      const dbSettings = settings?.database || {};
+      const mongoUri =
+        dbSettings.mongoUri ||
+        process.env.MONGO_URI;
+      const mongoDb =
+        dbSettings.mongoDb ||
+        process.env.MONGO_DB ||
+        "chat_logs";
+
+      if (mongoUri) {
+        const dbStart = Date.now();
+        const client = new MongoClient(mongoUri);
+        try {
+          await client.connect();
+          const db = client.db(mongoDb);
+          const doc = {
+            sessionId: sessionId || null,
+            question: message,
+            answer,
+            model: modelUsed,
+            createdAt: new Date(),
+          };
+          await db.collection("logs").insertOne(doc);
+          logged = true;
+        } finally {
+          await client.close();
+        }
+        dbMs = Date.now() - dbStart;
+      } else {
+        console.warn("Mongo logging skipped: no MongoDB configuration provided.");
+      }
+    } catch (logErr) {
+      console.error("Mongo logging failed", logErr);
+    }
+
+    const tokensPerSecond = completionTokens > 0 && llmMs > 0
+      ? Math.round((completionTokens / (llmMs / 1000)) * 10) / 10
+      : null;
+
+    return Response.json({
       answer,
-      model: "gpt-3.5-turbo",
-      createdAt: new Date(),
-    };
-    await db.collection("logs").insertOne(doc);
-
-    return Response.json({ answer });
+      logged,
+      stats: {
+        provider: useLmStudio ? "lmstudio" : "openai",
+        model: modelUsed,
+        llmMs,
+        dbMs,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        tokensPerSecond,
+      },
+    });
   } catch (err: unknown) {
     console.error("/api/chat error", err);
     const errorMessage =
